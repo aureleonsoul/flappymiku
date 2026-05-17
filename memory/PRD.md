@@ -1,37 +1,97 @@
-# Miku Flap — Product Requirements Document
+# Flappy Miku — PRD
 
-## Overview
-A Flappy Bird-style mini-game starring Hatsune Miku as the "bird". Built as a single self-contained vanilla-JS + HTML5 Canvas game, embedded inside the Expo app via `WebView` on mobile and a native `<iframe srcdoc>` on web. No external assets, no third-party APIs.
+A native React Native (Expo SDK 54) Flappy-Bird clone starring Hatsune Miku and friends, built for the Google Play Store. AdMob is wired in with real Android ad unit IDs and gated behind a safe wrapper so the same JS bundle still runs in Expo Go and the in-browser preview (ads no-op there).
 
-## Tech Stack
-- Frontend shell: Expo Router (`/app/index.tsx`) with `react-native-webview` (mobile) and an `<iframe srcdoc>` on web — both render the same standalone HTML game.
-- Game: `/app/frontend/src/game/mikuFlapHtml.ts` exports a single HTML string containing inline CSS and a vanilla JS Canvas game.
-- Persistence: `localStorage` inside the WebView/iframe for best score (`miku_flap_best`).
-- Audio: Procedural WebAudio (no asset files) — alternating musical notes from a C-major pentatonic-ish scale on every flap, a 2-note arpeggio on scoring, and a swept saw on collision.
+## Build target
+- Platform: Android (Play Store)
+- Package: `com.aureleonsoul.flappymiku`
+- Version: 1.0.0 (versionCode 1)
+- Build command: `eas build --platform android`
+- min/compile/target SDK: 21 / 34 / 34 (via `expo-build-properties`)
+- Privacy policy: https://aureleonsoul.github.io/privacy-policy/
+
+## Tech stack
+- Expo Router (file-based navigation)
+- `react-native-game-engine` for the 60 fps update loop
+- `react-native-svg` for character + leek sprites
+- `expo-av` for short flap / score / hit sound effects
+- `@react-native-async-storage/async-storage` for best score, selected character, unlocked roster, session counts, and rate-prompt state
+- `react-native-google-mobile-ads` for AdMob (banner, interstitial, rewarded)
+
+## File layout
+```
+app/
+  _layout.tsx               # Stack + SafeArea + AdMobProvider
+  index.tsx                 # Main menu (banner, play, character select, best, rate prompt)
+  game.tsx                  # Gameplay + revive flow + game-over panel
+  characters.tsx            # Unlock grid
+src/
+  ads/
+    googleMobileAds.ts      # Native AdMob bindings (Android / iOS)
+    googleMobileAds.web.ts  # Stub for Expo Go / Web (no native module)
+    AdMobProvider.tsx       # Initializes MobileAds on app launch
+    BannerAdView.tsx        # Anchored adaptive banner
+    InterstitialManager.ts  # Singleton: preload + show + cooldown
+    RewardedManager.ts      # Singleton: show + reward callback + fallback
+    Toast.tsx               # Lightweight in-app toast
+  game/
+    constants.ts            # Physics constants
+    engine.ts               # Entities + systems (physics, input, spawn, score, collision, revive)
+    WorldRenderer.tsx       # Renders sky/lights/leeks/ground/player/score from state
+    sound.ts                # expo-av sound pool
+    sprites/
+      Vocaloid.tsx          # Single SVG sprite parameterised per character
+      Leek.tsx              # Negi obstacle SVG
+  storage/
+    keys.ts                 # AsyncStorage keys
+    profile.ts              # load/save best, selected, unlocked, sessions, rate prompt
+assets/sounds/              # flap_c/d/e/g.wav, score.wav, hit.wav (procedurally generated)
+```
+
+## AdMob wiring (real IDs)
+| Placement | Unit ID | Where |
+|---|---|---|
+| App ID | `ca-app-pub-9157304901776255~7895265487` | `app.json` plugin config (injected into AndroidManifest by the config plugin) |
+| Banner | `ca-app-pub-9157304901776255/7101058560` | `BannerAdView` — used on **Main Menu**, **Game**, **Game Over**, **Character Select** |
+| Interstitial | `ca-app-pub-9157304901776255/6829595820` | Shown every 3rd game-over via `InterstitialManager.showIfReady()` |
+| Rewarded | `ca-app-pub-9157304901776255/8222568545` | "Revive!" button on game-over; on `EARNED_REWARD` we revive player, freeze pipes 1 s, invincibility 1.5 s; one revive per run; failure → toast "Ad not available, try again later" |
+
+In `__DEV__` the same code uses Google's test IDs from `TestIds.*` to avoid invalid traffic. Release builds use the real IDs above.
 
 ## Gameplay
-- Tap on the canvas / press `Space` / `ArrowUp` → Miku flaps upward.
-- Gravity pulls her down between flaps.
-- Scrolling leek (negi) obstacles scroll in from the right with vertical gaps; collision with any leek or the ground ends the game.
-- Score increments each time Miku passes a pair of leeks.
-- Game-over screen shows score, best score, "NEW BEST!" callout when applicable, and a "TRY AGAIN" button (also: tap anywhere to retry).
+- Gravity 1500 px/s², flap impulse −430 px/s, max fall 600 px/s.
+- Leek pipes 64 px wide, 175 px gap, 160 px/s scroll, spawned every 1.55 s.
+- Score increments when pipe.x + width passes player.x. Best stored to AsyncStorage and recomputed against unlock thresholds on every save.
+- Tap anywhere (mobile) or Space / ArrowUp (keyboard) to flap.
 
-## Visuals
-- Pastel sky gradient (pink → lavender → teal-blue) refreshed each frame.
-- Concert-stage aesthetic: animated sweeping teal + pink spotlights (screen blend), distant truss with pulsing lights and speaker stacks.
-- Procedurally drawn chibi Miku sprite on canvas: teal twin-tails with hair ties, sailor-style white/teal top, red tie, sweet face with teal eyes, blush, animated wing/arm flap, body rotation tied to vertical velocity.
-- Leek obstacles drawn with white bulb + green striped leaf body + jagged tips + root tufts at the gap edge.
-- Scrolling ground with grass + dirt stripes, ambient cloud parallax, sparkle particles on flap, confetti shower on death, score pop sparkles when passing leeks.
+## Characters (unlock thresholds saved to AsyncStorage)
+| ID | Name | Unlock at best score |
+|---|---|---|
+| `miku` | Hatsune Miku | 0 (default) |
+| `rin` | Kagamine Rin | 10 |
+| `len` | Kagamine Len | 10 |
+| `luka` | Megurine Luka | 25 |
+| `kaito` | KAITO | 40 |
+| `meiko` | MEIKO | 40 |
 
-## Controls
-- Pointer / touch: tap canvas anywhere.
-- Keyboard: `Space` or `ArrowUp`.
-- All inputs share the same handler so they work identically on mobile and desktop.
+Locked characters render as a dark silhouette with "Reach score N". All sprites are inline SVG — no PNG assets.
 
-## Test IDs
-- `miku-flap-webview` (RN mobile container)
-- `miku-flap-web-container`, `miku-flap-iframe` (web container)
-- `game-canvas`, `hint` (inside the game HTML)
+## Session / Rate prompt
+- A counter is bumped exactly once per app launch (`bumpSessionCount`).
+- On the 5th session, the main menu shows the "Enjoying the game? Rate us!" modal one time. Both buttons ("No thanks" / "Rate us!") set `ratePromptHandled = "1"` so the prompt never re-appears. "Rate us!" opens `https://play.google.com/store/apps/details?id=com.aureleonsoul.flappymiku`.
 
-## Smart Business Enhancement
-- Best-score persistence + "NEW BEST!" celebration creates a self-driven retention loop. Future hook: shareable score image (download canvas as PNG) to drive viral install attribution.
+## Sound
+- 4 short flap tones (C-D-E-G pentatonic with upward glide) rotate per flap.
+- Score: 2-note arpeggio. Hit: descending saw. All generated procedurally and bundled as tiny WAV files under `assets/sounds/`.
+
+## Cross-platform safety
+- `react-native-google-mobile-ads` is **not** present in Expo Go or web. Metro is told via `googleMobileAds.web.ts` to use a no-op module on web; the native file uses a guarded `require` so even on Expo Go (native module missing) the banner/interstitial/rewarded calls just return without crashing. Same JS works everywhere; ads only appear in the EAS-built APK/AAB.
+
+## What's intentionally out of scope for this iteration
+- App icon / adaptive-icon redesign (still using the Expo default art).
+- iOS-specific AdMob app ID (reusing the Android value as a placeholder — replace before iOS submission).
+- Server-side reward verification.
+- Running `eas build` (requires the developer's Expo account login). See `/app/EAS_BUILD_SETUP.md`.
+
+## Smart business enhancement
+Best-score persistence drives the character unlock curve at 10/25/40, giving players concrete progression goals beyond just the high score. The 5-session rate prompt and the rewarded "Revive!" flow lift both store rating and ad ARPDAU without nagging players.
