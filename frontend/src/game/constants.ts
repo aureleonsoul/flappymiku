@@ -3,8 +3,8 @@ export const GAME = {
   // Player
   PLAYER_X: 110,
   PLAYER_R: 22,
-  GRAVITY: 1500,
-  FLAP_VY: -430,
+  GRAVITY: 1350,
+  FLAP_VY: -520,
   MAX_VY: 600,
 
   // Pipes
