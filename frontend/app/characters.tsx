@@ -9,6 +9,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
 import { BannerAdView } from "../src/ads/BannerAdView";
 import { Toast } from "../src/ads/Toast";
+import { audioManager } from "../src/audio/AudioManager";
 import { Vocaloid } from "../src/game/sprites/Vocaloid";
 import {
   attemptUnlock,
@@ -45,6 +46,7 @@ export default function CharactersScreen() {
 
   const onCardPress = async (id: CharacterId) => {
     if (!profile) return;
+    audioManager.playClick();
     if (profile.unlocked.includes(id)) {
       await saveSelected(id);
       setProfile({ ...profile, selected: id });
@@ -59,6 +61,7 @@ export default function CharactersScreen() {
     const updated = await attemptUnlock(id);
     if (updated) {
       setProfile(updated);
+      audioManager.playUnlock();
       showToast(`${def.name} unlocked!`);
     }
   };

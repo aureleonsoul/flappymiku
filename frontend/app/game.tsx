@@ -34,13 +34,8 @@ import {
   type Entities,
 } from "../src/game/engine";
 import { WorldRenderer } from "../src/game/WorldRenderer";
-import {
-  initSounds,
-  playFlap,
-  playHit,
-  playScore,
-  resetFlapSequence,
-} from "../src/game/sound";
+import { audioManager } from "../src/audio/AudioManager";
+import { stageForScore } from "../src/game/constants";
 import { lightTap, mediumTap, heavyTap } from "../src/game/haptics";
 import {
   awardCoinsFromScore,
@@ -68,6 +63,8 @@ export default function GameScreen() {
   const [reviveUsed, setReviveUsed] = useState(false);
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
+  const [muted, setMuted] = useState(audioManager.isMuted());
+  const lastStageRef = useRef(1);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const engineRef = useRef<any>(null);
   const entitiesRef = useRef<Entities>(createInitialEntities(fieldWidth, fieldHeight));
@@ -83,9 +80,14 @@ export default function GameScreen() {
       setCharacterId(p.selected);
       setBest(p.best);
     })();
-    void initSounds();
+    void audioManager.init().then(() => {
+      audioManager.startMusic(1);
+    });
+    setMuted(audioManager.isMuted());
+    lastStageRef.current = 1;
     return () => {
       mounted = false;
+      audioManager.stopMusic();
     };
   }, []);
 
@@ -106,7 +108,6 @@ export default function GameScreen() {
   useFocusEffect(
     React.useCallback(() => {
       entitiesRef.current = createInitialEntities(fieldWidth, fieldHeight);
-      resetFlapSequence();
       setScore(0);
       setIsOver(false);
       setReviveUsed(false);
@@ -123,17 +124,36 @@ export default function GameScreen() {
     if (e.type === "flap-sound") {
       playFlap();
       lightTap();
+      const stage = stageForScore(entitiesRef.current.world.state.score).stage;
+      audioManager.playFlap(stage);
     } else if (e.type === "score") {
-      setScore(e.payload as number);
+      const newScore = e.payload as number;
+      setScore(newScore);
       playScore();
       mediumTap();
+      audioManager.playScore();
+      // Detect stage crossing here too in case the world tick didn't fire.
+      const newStage = stageForScore(newScore).stage;
+      if (newStage !== lastStageRef.current) {
+        lastStageRef.current = newStage;
+        audioManager.playStageTransition();
+        audioManager.startMusic(newStage);
+      }
+    } else if (e.type === "stage-change") {
+      const newStage = e.payload as number;
+      if (newStage !== lastStageRef.current) {
+        lastStageRef.current = newStage;
+        audioManager.playStageTransition();
+        audioManager.startMusic(newStage);
+      }
     } else if (e.type === "game-over") {
       const finalScore = e.payload as number;
       setOverScore(finalScore);
       setCoinsEarned(coinsFromScore(finalScore));
       setIsOver(true);
-      playHit();
       heavyTap();
+      audioManager.playHit();
+      audioManager.stopMusic();
       // Persist best + award coins.
       try {
         const p = await loadProfile();
@@ -157,11 +177,17 @@ export default function GameScreen() {
 
   const tryAgain = () => {
     entitiesRef.current = createInitialEntities(fieldWidth, fieldHeight);
-    resetFlapSequence();
     setScore(0);
     setIsOver(false);
     setReviveUsed(false);
     setRunKey((k) => k + 1);
+    lastStageRef.current = 1;
+    audioManager.startMusic(1);
+  };
+
+  const toggleMute = () => {
+    const m = audioManager.toggleMuted();
+    setMuted(m);
   };
 
   const goMenu = () => {
@@ -179,6 +205,8 @@ export default function GameScreen() {
         state.vy = 0;
         setReviveUsed(true);
         setIsOver(false);
+        audioManager.playReviveSuccess();
+        audioManager.startMusic(lastStageRef.current);
         // Force the engine to pick up the revived state without remounting.
         engineRef.current?.swap(entitiesRef.current);
       },
@@ -272,6 +300,18 @@ export default function GameScreen() {
           </View>
         ) : null}
         <Toast message={toastMsg} visible={toastVisible} onHide={() => setToastVisible(false)} />
+
+        {/* Mute / unmute button — top right of the play area */}
+        <View pointerEvents="box-none" style={styles.muteWrap}>
+          <Pressable
+            testID="mute-button"
+            onPress={toggleMute}
+            hitSlop={8}
+            style={({ pressed }) => [styles.muteBtn, pressed && styles.btnPressed]}
+          >
+            <Text style={styles.muteTxt}>{muted ? "🔇" : "🔊"}</Text>
+          </Pressable>
+        </View>
       </View>
 
       <SafeAreaView edges={["bottom"]} style={styles.bannerHolder}>
@@ -347,4 +387,20 @@ const styles = StyleSheet.create({
   tryAgainTxt: { color: "#fff", fontWeight: "900", letterSpacing: 2 },
   btnPressed: { transform: [{ scale: 0.97 }], opacity: 0.88 },
   bannerHolder: { backgroundColor: "#000" },
+  muteWrap: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+  },
+  muteBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(10,8,28,0.55)",
+    borderWidth: 2,
+    borderColor: "#39C5BB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  muteTxt: { fontSize: 18 },
 });

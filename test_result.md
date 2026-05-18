@@ -101,3 +101,83 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Flappy Miku — Expo/React Native game. Continued from previous session.
+  Last working item: Synthesized audio system (was broken — used Web Audio API
+  `AudioContext` which doesn't exist in React Native) + privacy-policy link
+  spacing fix (user wants ≥16px gap above banner ad).
+
+frontend:
+  - task: "Synthesized audio system via expo-av + JS-generated WAV PCM"
+    implemented: true
+    working: true
+    file: "frontend/src/audio/AudioManager.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Rewrote AudioManager to generate 16-bit PCM in JS, wrap it in a
+            WAV header, base64-encode, and load via expo-av's
+            Audio.Sound.createAsync({uri: 'data:audio/wav;base64,...'}).
+            Eliminates the previous AudioContext-on-RN failure entirely.
+            • Preloads 11 SFX (5 stage-pitched flaps + score, hit, stage-transition,
+              click, unlock, revive) at 22 kHz.
+            • Preloads 5 stage music loops at 16 kHz, each one bar long,
+              isLooping=true. Crossfades between stages on stage-change.
+            • Music playAsync() is deferred until first user gesture so the
+              browser autoplay policy doesn't trip (web preview only — no-op on
+              native).
+            • Added setSuspended(bool) for app-state background/foreground that
+              does NOT clobber the persisted mute preference (the previous
+              implementation did).
+            • Removed the duplicate legacy sound.ts calls from game.tsx.
+            Verified via screenshot: menu + game render with no audio errors;
+            previous "no extractors" / "AudioContext undefined" failures are gone.
+
+  - task: "Privacy-policy link spacing above banner ad (≥16 px gap)"
+    implemented: true
+    working: true
+    file: "frontend/app/index.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Switched the banner zone from `position: absolute` to natural
+            flex flow (matches characters.tsx / game.tsx), removed the
+            hard-coded 100 px paddingBottom hack, and gave the Privacy
+            Policy Pressable its own 16 px marginBottom + 6 px paddingVertical
+            for a comfortable tap target. Verified visually at 390×844.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 0
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Audio system on a real Android/iOS device (web preview blocks autoplay)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Replaced the Web-Audio-based AudioManager with a fully native
+        implementation using expo-av + JS-synthesized WAV base64 data URIs.
+        All public APIs (init, startMusic, stopMusic, playFlap, playScore,
+        playHit, playStageTransition, playClick, playUnlock,
+        playReviveSuccess, setMuted, toggleMuted, isMuted) are preserved.
+        Added setSuspended() for non-persisting background pause.
+        Privacy-policy link now has a guaranteed 16 px+ clearance above the
+        banner ad zone. Need user verification on a real device — web
+        preview has expected autoplay restrictions that don't apply to
+        native.

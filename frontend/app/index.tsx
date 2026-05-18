@@ -94,7 +94,7 @@ export default function MainMenu() {
         locations={[0, 0.45, 1]}
         style={StyleSheet.absoluteFill}
       />
-      {/* Content row — scrollable so it never gets hidden by the banner */}
+      {/* Content row — takes all remaining space above the banner */}
       <SafeAreaView edges={["top"]} style={styles.contentSafe}>
         <ScrollView
           contentContainerStyle={styles.scroll}
@@ -137,13 +137,19 @@ export default function MainMenu() {
             </Pressable>
           </View>
 
-          <Pressable onPress={() => Linking.openURL(PRIVACY_URL)} hitSlop={10}>
+          <Pressable
+            testID="privacy-policy-link"
+            onPress={() => Linking.openURL(PRIVACY_URL)}
+            hitSlop={10}
+            style={styles.privacyPressable}
+          >
             <Text style={styles.privacyLink}>Privacy Policy</Text>
           </Pressable>
         </ScrollView>
       </SafeAreaView>
 
-      {/* Banner row — fixed-height, sits beneath the content */}
+      {/* Banner row — sits at the bottom in normal flex flow (not absolute),
+          guaranteeing the privacy link above always has a clear gap. */}
       <SafeAreaView edges={["bottom"]} style={styles.bannerHolder}>
         <BannerAdView testID="banner-menu" />
       </SafeAreaView>
@@ -198,13 +204,13 @@ function characterName(id: string): string {
 
 const styles = StyleSheet.create({
   root: { flex: 1, flexDirection: "column", backgroundColor: "#0a0a14" },
-  contentSafe: { flex: 1, paddingBottom: 70 },
+  contentSafe: { flex: 1 },
   scroll: {
     flexGrow: 1,
     alignItems: "center",
     justifyContent: "space-between",
     paddingTop: 12,
-    paddingBottom: 16,
+    paddingBottom: 8,
   },
   titleWrap: { alignItems: "center", marginTop: 4 },
   titleShadow: {
@@ -274,18 +280,20 @@ const styles = StyleSheet.create({
   },
   secondaryTxt: { color: "#1f7e78", fontSize: 14, fontWeight: "800", letterSpacing: 2 },
   btnPressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
+  // 16+px clearance to the banner zone below, plus an enlarged hit area.
+  privacyPressable: {
+    marginTop: 14,
+    marginBottom: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
   privacyLink: {
-    color: "rgba(20,15,40,0.7)",
+    color: "rgba(20,15,40,0.75)",
     fontSize: 12,
     textDecorationLine: "underline",
-    marginTop: 12,
-    marginBottom: 4,
+    fontWeight: "600",
   },
   bannerHolder: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
     backgroundColor: "#000",
   },
   modalBackdrop: {
