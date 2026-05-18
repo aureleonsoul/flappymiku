@@ -111,6 +111,10 @@ export default function MainMenu() {
           <Text style={styles.charLabel}>
             {profile ? characterName(selected) : ""}
           </Text>
+          <View style={styles.coinRow} testID="coin-chip">
+            <View style={styles.coinDot} />
+            <Text style={styles.coinTxt}>{profile?.coins ?? 0} coins</Text>
+          </View>
         </View>
 
         <View style={styles.actions}>
@@ -221,6 +225,27 @@ const styles = StyleSheet.create({
   bestLabel: { color: "#444", fontSize: 12, fontWeight: "700", letterSpacing: 2 },
   bestValue: { color: "#1f7e78", fontSize: 44, fontWeight: "900", marginVertical: 2 },
   charLabel: { color: "#666", fontSize: 13, fontWeight: "700" },
+  coinRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    backgroundColor: "rgba(255,210,63,0.25)",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(199,154,0,0.5)",
+  },
+  coinDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#FFD23F",
+    borderWidth: 1.5,
+    borderColor: "#c79a00",
+  },
+  coinTxt: { color: "#7a5a00", fontWeight: "900", fontSize: 13, letterSpacing: 1 },
   actions: { width: "85%", alignItems: "stretch", marginBottom: 18 },
   playBtn: {
     backgroundColor: "#39C5BB",

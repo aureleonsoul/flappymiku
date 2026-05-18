@@ -42,6 +42,8 @@ import {
   resetFlapSequence,
 } from "../src/game/sound";
 import {
+  awardCoinsFromScore,
+  coinsFromScore,
   loadProfile,
   saveBest,
   type CharacterId,
@@ -60,6 +62,7 @@ export default function GameScreen() {
   const [best, setBest] = useState(0);
   const [score, setScore] = useState(0);
   const [overScore, setOverScore] = useState(0);
+  const [coinsEarned, setCoinsEarned] = useState(0);
   const [isOver, setIsOver] = useState(false);
   const [reviveUsed, setReviveUsed] = useState(false);
   const [toastVisible, setToastVisible] = useState(false);
@@ -124,9 +127,10 @@ export default function GameScreen() {
     } else if (e.type === "game-over") {
       const finalScore = e.payload as number;
       setOverScore(finalScore);
+      setCoinsEarned(coinsFromScore(finalScore));
       setIsOver(true);
       playHit();
-      // Persist best + unlocks.
+      // Persist best + award coins.
       try {
         const p = await loadProfile();
         if (finalScore > p.best) {
@@ -135,8 +139,9 @@ export default function GameScreen() {
         } else {
           setBest(p.best);
         }
+        await awardCoinsFromScore(finalScore);
       } catch (err) {
-        console.warn("[game] save best failed:", err);
+        console.warn("[game] save run failed:", err);
       }
       // Interstitial every 3rd game over.
       gameOverCounter += 1;
@@ -223,6 +228,13 @@ export default function GameScreen() {
                 </View>
               </View>
               {newBest ? <Text style={styles.newBest}>NEW BEST!</Text> : null}
+              {coinsEarned > 0 ? (
+                <Text style={styles.coinsLine} testID="coins-earned">
+                  +{coinsEarned} coin{coinsEarned === 1 ? "" : "s"} earned!
+                </Text>
+              ) : (
+                <Text style={styles.coinsHint}>Score 15+ to earn coins</Text>
+              )}
 
               <View style={styles.overActions}>
                 {!reviveUsed ? (
@@ -294,6 +306,8 @@ const styles = StyleSheet.create({
   scoreColLbl: { color: "#666", fontSize: 12, fontWeight: "800", letterSpacing: 2 },
   scoreColVal: { color: "#1f7e78", fontSize: 36, fontWeight: "900" },
   newBest: { color: "#ff6f9c", fontWeight: "900", marginTop: 6, letterSpacing: 1 },
+  coinsLine: { color: "#c79a00", fontWeight: "900", marginTop: 4, letterSpacing: 1, fontSize: 14 },
+  coinsHint: { color: "#888", fontWeight: "700", marginTop: 4, letterSpacing: 1, fontSize: 11 },
   overActions: { width: "100%", marginTop: 16 },
   reviveBtn: {
     backgroundColor: "#ff8a3d",
