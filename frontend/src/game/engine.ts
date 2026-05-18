@@ -1,16 +1,31 @@
 /**
  * react-native-game-engine entities + systems for Flappy Miku.
- * Now with score-driven stages, pipe wobble, and stage-transition timers.
+ * Pipe generation uses a guaranteed-completable formula: every spawn computes
+ * the reachable vertical window from the player's current Y, intersects it
+ * with the screen-edge margin and the "40% screen height vs previous gap"
+ * constraint, then samples uniformly inside the resulting interval. This
+ * means every pipe is mathematically passable given a perfectly-timed flap.
  */
-import { GAME, stageForScore, type GameStatus } from "./constants";
+import {
+  GAME,
+  reachableDelta,
+  spawnIntervalSeconds,
+  stageForScore,
+  type GameStatus,
+  type StageParams,
+} from "./constants";
 
 export interface Pipe {
   id: string;
   x: number;
-  gapY: number;      // baseline; wobble is applied on top via gapYOffset()
+  /** Top edge of the gap (in px). */
+  gapY: number;
+  /** Gap size in px — stored per pipe so old pipes keep their original gap. */
+  gap: number;
   passed: boolean;
-  stage: number;     // stage at which the pipe was spawned (drives its art)
-  wobblePhase: number;
+  stage: number;
+  /** Pixels per second this pipe is moving (frozen at spawn time). */
+  speed: number;
 }
 
 export interface WorldState {
@@ -30,15 +45,10 @@ export interface WorldState {
   reviveUsed: boolean;
   groundOffset: number;
   cloudOffset: number;
-  /** Current stage (recomputed each frame from `score`). */
   stage: number;
-  /** Stage the rendering was previously showing — used for crossfade. */
   prevStage: number;
-  /** Crossfade progress 0..1; 1 = fully on `stage`. */
   stageFade: number;
-  /** Stage flash banner countdown in seconds (>0 while visible). */
   stageFlashTimer: number;
-  /** Cumulative game time (s) for wobble + shimmer animations. */
   time: number;
 }
 
@@ -83,12 +93,6 @@ const nextPipeId = (): string => {
   return `p${_pipeId}`;
 };
 
-/** Effective gap-Y for a pipe at the current world time (applies wobble). */
-export function pipeGapYWithWobble(p: Pipe, time: number, amp: number): number {
-  if (amp <= 0) return p.gapY;
-  return p.gapY + Math.sin(time * 1.6 + p.wobblePhase) * amp;
-}
-
 interface SystemArgs {
   time: { delta: number };
   touches: { type: string }[];
@@ -102,7 +106,6 @@ export function physicsSystem(entities: Entities, args: SystemArgs): Entities {
   s.time += dt;
   s.cloudOffset = (s.cloudOffset + dt * 14) % 360;
 
-  // Stage transitions: recompute current stage and start a crossfade when it changes.
   const params = stageForScore(s.score);
   if (params.stage !== s.stage) {
     s.prevStage = s.stage;
@@ -111,12 +114,8 @@ export function physicsSystem(entities: Entities, args: SystemArgs): Entities {
     s.stageFlashTimer = GAME.STAGE_FLASH_S;
     args.dispatch({ type: "stage-change", payload: s.stage });
   }
-  if (s.stageFade < 1) {
-    s.stageFade = Math.min(1, s.stageFade + dt / GAME.STAGE_FADE_S);
-  }
-  if (s.stageFlashTimer > 0) {
-    s.stageFlashTimer = Math.max(0, s.stageFlashTimer - dt);
-  }
+  if (s.stageFade < 1) s.stageFade = Math.min(1, s.stageFade + dt / GAME.STAGE_FADE_S);
+  if (s.stageFlashTimer > 0) s.stageFlashTimer = Math.max(0, s.stageFlashTimer - dt);
 
   if (s.status === "ready") {
     s.y = s.playableHeight * 0.4 + Math.sin(Date.now() / 350) * 6;
@@ -126,7 +125,7 @@ export function physicsSystem(entities: Entities, args: SystemArgs): Entities {
   }
 
   if (s.status === "playing") {
-    s.groundOffset = (s.groundOffset + params.speedMul * GAME.PIPE_SPEED_BASE * dt) % 24;
+    s.groundOffset = (s.groundOffset + params.speed * dt) % 24;
 
     s.vy = Math.min(GAME.MAX_VY, s.vy + GAME.GRAVITY * dt);
     s.y += s.vy * dt;
@@ -176,6 +175,39 @@ export function inputSystem(entities: Entities, args: SystemArgs): Entities {
   return entities;
 }
 
+/**
+ * Compute the gap top-Y for a new pipe using the guaranteed-completable
+ * formula. Always returns a value in [0, playableHeight - gap].
+ */
+function pickGapY(s: WorldState, params: StageParams): number {
+  const halfGap = params.gap / 2;
+  const minCenter = halfGap + 30;
+  const maxCenter = s.playableHeight - (halfGap + 30);
+
+  const reach = reachableDelta(params.speed, params.margin);
+  let lo = Math.max(minCenter, s.y - reach);
+  let hi = Math.min(maxCenter, s.y + reach);
+
+  // Cap delta from the most recent pipe's gap center to keep consecutive
+  // pipes within 40% of the playable height of each other.
+  if (s.pipes.length > 0) {
+    const last = s.pipes[s.pipes.length - 1];
+    const lastCenter = last.gapY + last.gap / 2;
+    const maxDelta = s.playableHeight * 0.4;
+    lo = Math.max(lo, lastCenter - maxDelta);
+    hi = Math.min(hi, lastCenter + maxDelta);
+  }
+
+  // If constraints collapsed (extreme cases at very high stages), centre the
+  // gap on the player so it's at least directly in front of them.
+  if (lo > hi) {
+    const fallback = Math.max(minCenter, Math.min(maxCenter, s.y));
+    return fallback - halfGap;
+  }
+  const center = lo + Math.random() * (hi - lo);
+  return center - halfGap;
+}
+
 export function spawnSystem(entities: Entities, args: SystemArgs): Entities {
   const dt = args.time.delta / 1000;
   const s = entities.world.state;
@@ -186,24 +218,24 @@ export function spawnSystem(entities: Entities, args: SystemArgs): Entities {
 
   s.spawnTimer -= dt;
   if (s.spawnTimer <= 0) {
-    const minY = 70;
-    const maxY = s.playableHeight - params.gap - 60;
-    const gapY = minY + Math.random() * (maxY - minY);
+    const gapY = pickGapY(s, params);
     s.pipes.push({
       id: nextPipeId(),
       x: s.width + 20,
       gapY,
+      gap: params.gap,
       passed: false,
       stage: params.stage,
-      wobblePhase: Math.random() * Math.PI * 2,
+      speed: params.speed,
     });
-    s.spawnTimer = params.spawnInterval;
+    s.spawnTimer = spawnIntervalSeconds(params.speed, s.width);
   }
 
-  const dx = params.speedMul * GAME.PIPE_SPEED_BASE * dt;
+  // Pipe positions: each pipe keeps the speed it was spawned with so stage
+  // changes don't suddenly accelerate pipes already on screen.
   for (let i = s.pipes.length - 1; i >= 0; i--) {
     const p = s.pipes[i];
-    p.x -= dx;
+    p.x -= p.speed * dt;
     if (p.x + GAME.PIPE_WIDTH < -20) s.pipes.splice(i, 1);
   }
   return entities;
@@ -242,18 +274,15 @@ export function collisionSystem(entities: Entities, args: SystemArgs): Entities 
     return entities;
   }
 
-  const params = stageForScore(s.score);
   const cx = GAME.PLAYER_X;
   const cy = s.y;
   const cr = GAME.PLAYER_R * 0.78;
   for (const p of s.pipes) {
-    const effGapY = pipeGapYWithWobble(p, s.time, params.wobbleAmp);
-    const topY = 0;
-    const topH = effGapY;
-    const botY = effGapY + params.gap;
+    const topH = p.gapY;
+    const botY = p.gapY + p.gap;
     const botH = s.playableHeight - botY;
     if (
-      circleVsRect(cx, cy, cr, p.x, topY, GAME.PIPE_WIDTH, topH) ||
+      circleVsRect(cx, cy, cr, p.x, 0, GAME.PIPE_WIDTH, topH) ||
       circleVsRect(cx, cy, cr, p.x, botY, GAME.PIPE_WIDTH, botH)
     ) {
       s.status = "over";

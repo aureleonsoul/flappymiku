@@ -1,17 +1,29 @@
-/** Physics + layout constants + score-driven difficulty staging. */
+/**
+ * Physics + layout constants + score-driven difficulty staging.
+ *
+ * Physics base values are specified per frame at 60 fps; we convert them to
+ * the engine's seconds-based integration once at module load so the rest of
+ * the game stays unit-consistent.
+ */
+
+const FPS = 60;
+/** Frame-domain spec values (per the design doc). */
+const GRAVITY_PF = 0.38;        // px / frame²
+const FLAP_VY_PF = -7.2;        // px / frame
+const MAX_FALL_PF = 8;          // px / frame
+
 export const GAME = {
   // Player
   PLAYER_X: 110,
   PLAYER_R: 22,
-  GRAVITY: 950,           // softer fall → longer apex hang time
-  FLAP_VY: -540,          // stronger upward impulse
-  MAX_VY: 480,
 
-  // Pipes (base values — stages scale these)
+  // Physics — converted from per-frame to per-second.
+  GRAVITY: GRAVITY_PF * FPS * FPS,   // 1368 px/s²
+  FLAP_VY: FLAP_VY_PF * FPS,         // -432 px/s
+  MAX_VY: MAX_FALL_PF * FPS,         // 480 px/s
+
+  // Pipes
   PIPE_WIDTH: 64,
-  PIPE_GAP_BASE: 175,
-  PIPE_SPEED_BASE: 160,   // px per second
-  SPAWN_INTERVAL_BASE: 1.55,
 
   // Layout
   GROUND_H: 90,
@@ -24,45 +36,41 @@ export const GAME = {
   STAGE_FADE_S: 1.5,
   STAGE_FLASH_S: 1.0,
 
-  // Hard floor on the gap so beyond-stage-5 never becomes literally impossible.
-  MIN_PIPE_GAP: 90,
+  /**
+   * Floor on the gap size. Computed as (player diameter) + 55 px per spec,
+   * which dominates the "95 px hard floor" mentioned in the design doc.
+   */
+  MIN_PIPE_GAP: 22 * 2 + 55, // = 99 px
 } as const;
 
 export type GameStatus = "ready" | "playing" | "over";
 
 export interface StageParams {
-  stage: number;          // 1..N
-  speedMul: number;       // multiplier on PIPE_SPEED_BASE
-  gap: number;            // px
-  spawnInterval: number;  // seconds
-  wobbleAmp: number;      // px (0 = no wobble)
+  stage: number;
+  /** absolute pipe speed in px/s */
+  speed: number;
+  /** vertical gap size in px */
+  gap: number;
+  /** challenge margin 0..1 applied to the reachability window */
+  margin: number;
 }
 
-/**
- * Resolve the difficulty parameters for a given score.
- * Stage 1: 0-9, Stage 2: 10-24, Stage 3: 25-39, Stage 4: 40-59, Stage 5: 60+,
- * then procedural ramp every 10 score points past 60.
- */
+/** Resolve the stage parameters for the current score. */
 export function stageForScore(score: number): StageParams {
-  if (score < 10) {
-    return { stage: 1, speedMul: 1.0, gap: 175, spawnInterval: 1.55, wobbleAmp: 0 };
-  }
-  if (score < 25) {
-    return { stage: 2, speedMul: 1.15, gap: 165, spawnInterval: 1.55, wobbleAmp: 0 };
-  }
-  if (score < 40) {
-    return { stage: 3, speedMul: 1.30, gap: 155, spawnInterval: 1.45, wobbleAmp: 0 };
-  }
-  if (score < 60) {
-    return { stage: 4, speedMul: 1.50, gap: 145, spawnInterval: 1.35, wobbleAmp: 10 };
-  }
-  // Stage 5+ procedural ramp.
+  if (score < 10)  return clampParams({ stage: 1, speed: 140, gap: 175, margin: 0.92 });
+  if (score < 25)  return clampParams({ stage: 2, speed: 162, gap: 165, margin: 0.85 });
+  if (score < 40)  return clampParams({ stage: 3, speed: 188, gap: 148, margin: 0.75 });
+  if (score < 60)  return clampParams({ stage: 4, speed: 230, gap: 120, margin: 0.62 });
+
+  // Stage 5+: procedural ramp.
   const stepsPast60 = Math.floor((score - 60) / 10);
-  const speedMul = 1.70 * Math.pow(1.05, stepsPast60);
-  const gap = Math.max(GAME.MIN_PIPE_GAP, 135 - stepsPast60 * 2);
-  const spawnInterval = Math.max(1.05, 1.30 - stepsPast60 * 0.02);
-  const wobbleAmp = 20 + Math.min(20, stepsPast60 * 2);
-  return { stage: 5, speedMul, gap, spawnInterval, wobbleAmp };
+  const speed = Math.min(420, 265 * Math.pow(1.05, stepsPast60));
+  const gap = 105 - stepsPast60 * 2;
+  return clampParams({ stage: 5, speed, gap, margin: 0.50 });
+}
+
+function clampParams(p: StageParams): StageParams {
+  return { ...p, gap: Math.max(GAME.MIN_PIPE_GAP, p.gap) };
 }
 
 export const STAGE_NAMES: Record<number, string> = {
@@ -72,3 +80,24 @@ export const STAGE_NAMES: Record<number, string> = {
   4: "CYBER NIGHT",
   5: "OUTER SPACE",
 };
+
+/**
+ * Reachability window — how far above + below the player's current Y the
+ * gap center is allowed to sit, given the current pipe speed and the stage's
+ * challenge margin. Guarantees the gap is theoretically reachable.
+ */
+export function reachableDelta(speed: number, margin: number): number {
+  const travelTime = GAME.PIPE_WIDTH / speed; // seconds
+  const maxRise = Math.abs(GAME.FLAP_VY) * travelTime;
+  const maxFall = 0.5 * GAME.GRAVITY * travelTime * travelTime;
+  return (maxRise + maxFall) * margin;
+}
+
+/**
+ * Horizontal spacing between consecutive pipe spawns, independent of speed.
+ * Target ~3 pipes visible at once at 1.8× screen-width total span.
+ */
+export function spawnIntervalSeconds(speed: number, screenWidth: number): number {
+  const targetSpacing = (1.8 * screenWidth) / 3;
+  return targetSpacing / speed;
+}

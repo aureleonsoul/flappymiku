@@ -6,10 +6,9 @@
 import React from "react";
 import { View, StyleSheet, Text, Platform } from "react-native";
 import { LinearGradient as ExpoLinearGradient } from "expo-linear-gradient";
-import { GAME, stageForScore, STAGE_NAMES } from "./constants";
+import { GAME, STAGE_NAMES } from "./constants";
 import { Background } from "./Background";
 import type { WorldState } from "./engine";
-import { pipeGapYWithWobble } from "./engine";
 import { Leek } from "./sprites/Leek";
 import { Vocaloid } from "./sprites/Vocaloid";
 import type { CharacterId } from "../storage/profile";
@@ -39,7 +38,6 @@ export const WorldRenderer: React.FC<Props> = ({ state, characterId }) => {
   } = state;
 
   const invinciFlash = invincibleTimer > 0 && Math.floor(invincibleTimer * 12) % 2 === 0;
-  const params = stageForScore(score);
 
   // Ground colour shifts with stage so it doesn't clash with a navy/space sky.
   const isDarkStage = stage >= 3;
@@ -61,9 +59,8 @@ export const WorldRenderer: React.FC<Props> = ({ state, characterId }) => {
 
       {/* Pipes (leeks) */}
       {pipes.map((p) => {
-        const effGapY = pipeGapYWithWobble(p, time, params.wobbleAmp);
-        const topH = Math.max(1, effGapY);
-        const botY = effGapY + params.gap;
+        const topH = Math.max(1, p.gapY);
+        const botY = p.gapY + p.gap;
         const botH = Math.max(1, playableHeight - botY);
         return (
           <React.Fragment key={p.id}>
