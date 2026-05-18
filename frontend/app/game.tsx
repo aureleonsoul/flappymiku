@@ -41,6 +41,7 @@ import {
   playScore,
   resetFlapSequence,
 } from "../src/game/sound";
+import { lightTap, mediumTap, heavyTap } from "../src/game/haptics";
 import {
   awardCoinsFromScore,
   coinsFromScore,
@@ -121,15 +122,18 @@ export default function GameScreen() {
   const onEvent = async (e: { type: string; payload?: unknown }) => {
     if (e.type === "flap-sound") {
       playFlap();
+      lightTap();
     } else if (e.type === "score") {
       setScore(e.payload as number);
       playScore();
+      mediumTap();
     } else if (e.type === "game-over") {
       const finalScore = e.payload as number;
       setOverScore(finalScore);
       setCoinsEarned(coinsFromScore(finalScore));
       setIsOver(true);
       playHit();
+      heavyTap();
       // Persist best + award coins.
       try {
         const p = await loadProfile();

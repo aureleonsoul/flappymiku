@@ -1,37 +1,45 @@
 /**
  * react-native-game-engine entities + systems for Flappy Miku.
- *
- * The engine calls each system once per frame with
- *   (entities, { time, touches, events, dispatch })
- * Systems mutate / return `entities`; UI re-renders only when something
- * changes thanks to entity-level memoisation in the engine.
+ * Now with score-driven stages, pipe wobble, and stage-transition timers.
  */
-import { GAME, GameStatus } from "./constants";
+import { GAME, stageForScore, type GameStatus } from "./constants";
 
 export interface Pipe {
   id: string;
-  x: number; // left edge
-  gapY: number; // top of gap
+  x: number;
+  gapY: number;      // baseline; wobble is applied on top via gapYOffset()
   passed: boolean;
+  stage: number;     // stage at which the pipe was spawned (drives its art)
+  wobblePhase: number;
 }
 
 export interface WorldState {
   width: number;
   height: number;
-  playableHeight: number; // height - GROUND_H
+  playableHeight: number;
   status: GameStatus;
   vy: number;
   y: number;
   angle: number;
-  flap: number; // 0..1 wing animation
+  flap: number;
   pipes: Pipe[];
   score: number;
   spawnTimer: number;
-  freezeTimer: number; // seconds during which pipes don't move (post-revive)
-  invincibleTimer: number; // seconds during which we ignore collisions
+  freezeTimer: number;
+  invincibleTimer: number;
   reviveUsed: boolean;
   groundOffset: number;
   cloudOffset: number;
+  /** Current stage (recomputed each frame from `score`). */
+  stage: number;
+  /** Stage the rendering was previously showing — used for crossfade. */
+  prevStage: number;
+  /** Crossfade progress 0..1; 1 = fully on `stage`. */
+  stageFade: number;
+  /** Stage flash banner countdown in seconds (>0 while visible). */
+  stageFlashTimer: number;
+  /** Cumulative game time (s) for wobble + shimmer animations. */
+  time: number;
 }
 
 export interface Entities {
@@ -59,18 +67,27 @@ export function createInitialEntities(width: number, height: number): Entities {
         reviveUsed: false,
         groundOffset: 0,
         cloudOffset: 0,
+        stage: 1,
+        prevStage: 1,
+        stageFade: 1,
+        stageFlashTimer: 0,
+        time: 0,
       },
     },
   };
 }
 
 let _pipeId = 0;
-function nextPipeId(): string {
+const nextPipeId = (): string => {
   _pipeId += 1;
   return `p${_pipeId}`;
-}
+};
 
-// ----- Systems -----
+/** Effective gap-Y for a pipe at the current world time (applies wobble). */
+export function pipeGapYWithWobble(p: Pipe, time: number, amp: number): number {
+  if (amp <= 0) return p.gapY;
+  return p.gapY + Math.sin(time * 1.6 + p.wobblePhase) * amp;
+}
 
 interface SystemArgs {
   time: { delta: number };
@@ -82,10 +99,26 @@ interface SystemArgs {
 export function physicsSystem(entities: Entities, args: SystemArgs): Entities {
   const dt = args.time.delta / 1000;
   const s = entities.world.state;
+  s.time += dt;
   s.cloudOffset = (s.cloudOffset + dt * 14) % 360;
 
+  // Stage transitions: recompute current stage and start a crossfade when it changes.
+  const params = stageForScore(s.score);
+  if (params.stage !== s.stage) {
+    s.prevStage = s.stage;
+    s.stage = params.stage;
+    s.stageFade = 0;
+    s.stageFlashTimer = GAME.STAGE_FLASH_S;
+    args.dispatch({ type: "stage-change", payload: s.stage });
+  }
+  if (s.stageFade < 1) {
+    s.stageFade = Math.min(1, s.stageFade + dt / GAME.STAGE_FADE_S);
+  }
+  if (s.stageFlashTimer > 0) {
+    s.stageFlashTimer = Math.max(0, s.stageFlashTimer - dt);
+  }
+
   if (s.status === "ready") {
-    // gentle hover
     s.y = s.playableHeight * 0.4 + Math.sin(Date.now() / 350) * 6;
     s.angle = Math.sin(Date.now() / 350) * 0.08;
     s.flap = Math.max(0, s.flap - dt * 4);
@@ -93,7 +126,7 @@ export function physicsSystem(entities: Entities, args: SystemArgs): Entities {
   }
 
   if (s.status === "playing") {
-    s.groundOffset = (s.groundOffset + GAME.PIPE_SPEED * dt) % 24;
+    s.groundOffset = (s.groundOffset + params.speedMul * GAME.PIPE_SPEED_BASE * dt) % 24;
 
     s.vy = Math.min(GAME.MAX_VY, s.vy + GAME.GRAVITY * dt);
     s.y += s.vy * dt;
@@ -103,7 +136,6 @@ export function physicsSystem(entities: Entities, args: SystemArgs): Entities {
     if (s.freezeTimer > 0) s.freezeTimer = Math.max(0, s.freezeTimer - dt);
     if (s.invincibleTimer > 0) s.invincibleTimer = Math.max(0, s.invincibleTimer - dt);
 
-    // ceiling
     if (s.y - GAME.PLAYER_R < 0) {
       s.y = GAME.PLAYER_R;
       s.vy = 0;
@@ -119,14 +151,12 @@ export function physicsSystem(entities: Entities, args: SystemArgs): Entities {
       s.vy = 0;
     }
   }
-
   return entities;
 }
 
 export function inputSystem(entities: Entities, args: SystemArgs): Entities {
   const s = entities.world.state;
   const tapped = (args.touches || []).some((t) => t.type === "start" || t.type === "press");
-  // Engine events from React state (e.g., keyboard or programmatic flap).
   const flapEvent = (args.events || []).some((e) => e.type === "flap");
   if (!tapped && !flapEvent) return entities;
 
@@ -152,27 +182,29 @@ export function spawnSystem(entities: Entities, args: SystemArgs): Entities {
   if (s.status !== "playing") return entities;
   if (s.freezeTimer > 0) return entities;
 
+  const params = stageForScore(s.score);
+
   s.spawnTimer -= dt;
   if (s.spawnTimer <= 0) {
     const minY = 70;
-    const maxY = s.playableHeight - GAME.PIPE_GAP - 60;
+    const maxY = s.playableHeight - params.gap - 60;
     const gapY = minY + Math.random() * (maxY - minY);
     s.pipes.push({
       id: nextPipeId(),
       x: s.width + 20,
       gapY,
       passed: false,
+      stage: params.stage,
+      wobblePhase: Math.random() * Math.PI * 2,
     });
-    s.spawnTimer = GAME.SPAWN_INTERVAL;
+    s.spawnTimer = params.spawnInterval;
   }
 
-  // move pipes
+  const dx = params.speedMul * GAME.PIPE_SPEED_BASE * dt;
   for (let i = s.pipes.length - 1; i >= 0; i--) {
     const p = s.pipes[i];
-    p.x -= GAME.PIPE_SPEED * dt;
-    if (p.x + GAME.PIPE_WIDTH < -20) {
-      s.pipes.splice(i, 1);
-    }
+    p.x -= dx;
+    if (p.x + GAME.PIPE_WIDTH < -20) s.pipes.splice(i, 1);
   }
   return entities;
 }
@@ -203,7 +235,6 @@ export function collisionSystem(entities: Entities, args: SystemArgs): Entities 
   if (s.status !== "playing") return entities;
   if (s.invincibleTimer > 0) return entities;
 
-  // Ground
   if (s.y + GAME.PLAYER_R >= s.playableHeight) {
     s.status = "over";
     s.y = s.playableHeight - GAME.PLAYER_R;
@@ -211,14 +242,15 @@ export function collisionSystem(entities: Entities, args: SystemArgs): Entities 
     return entities;
   }
 
-  // Pipes
+  const params = stageForScore(s.score);
   const cx = GAME.PLAYER_X;
   const cy = s.y;
   const cr = GAME.PLAYER_R * 0.78;
   for (const p of s.pipes) {
+    const effGapY = pipeGapYWithWobble(p, s.time, params.wobbleAmp);
     const topY = 0;
-    const topH = p.gapY;
-    const botY = p.gapY + GAME.PIPE_GAP;
+    const topH = effGapY;
+    const botY = effGapY + params.gap;
     const botH = s.playableHeight - botY;
     if (
       circleVsRect(cx, cy, cr, p.x, topY, GAME.PIPE_WIDTH, topH) ||
@@ -232,7 +264,6 @@ export function collisionSystem(entities: Entities, args: SystemArgs): Entities 
   return entities;
 }
 
-/** Apply a revive: restore status, give brief freeze + invincibility, slow the fall. */
 export function reviveWorld(entities: Entities): void {
   const s = entities.world.state;
   s.status = "playing";
@@ -241,8 +272,6 @@ export function reviveWorld(entities: Entities): void {
   s.freezeTimer = GAME.REVIVE_FREEZE_S;
   s.invincibleTimer = GAME.REVIVE_INVINCIBLE_S;
   s.reviveUsed = true;
-  // nudge player away from any pipe that's currently overlapping by clearing
-  // any pipe that is sitting right on top of the player.
   s.pipes = s.pipes.filter((p) => p.x + GAME.PIPE_WIDTH < GAME.PLAYER_X - 30 || p.x > GAME.PLAYER_X + 60);
 }
 
@@ -259,4 +288,9 @@ export function resetWorld(entities: Entities): void {
   s.freezeTimer = 0;
   s.invincibleTimer = 0;
   s.reviveUsed = false;
+  s.stage = 1;
+  s.prevStage = 1;
+  s.stageFade = 1;
+  s.stageFlashTimer = 0;
+  s.time = 0;
 }

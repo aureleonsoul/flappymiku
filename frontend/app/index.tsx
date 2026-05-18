@@ -1,7 +1,8 @@
 /**
- * Main menu screen. Shows the play button, best score, character select, and
- * the persistent banner ad. Tracks session counts and surfaces a one-time
- * "Rate us!" prompt after the 5th session.
+ * Main menu. Layout is a strict 2-row column: the content area is wrapped in
+ * `flex: 1` so it never extends into the bottom banner zone (which was the
+ * source of the CHARACTERS-button-covered-by-banner bug). The banner is its
+ * own bottom-pinned row with the device's bottom safe-area inset.
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -10,6 +11,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -40,7 +42,6 @@ export default function MainMenu() {
   const [showRatePrompt, setShowRatePrompt] = useState(false);
   const sessionBumpedRef = React.useRef(false);
 
-  // Reload profile every time we come back to the menu (e.g., after a run).
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
@@ -54,7 +55,6 @@ export default function MainMenu() {
     }, [])
   );
 
-  // Bump the session counter exactly once per app launch.
   useEffect(() => {
     if (sessionBumpedRef.current) return;
     sessionBumpedRef.current = true;
@@ -63,7 +63,6 @@ export default function MainMenu() {
       const p = await loadProfile();
       setProfile(p);
       if (count >= 5 && !p.ratePromptHandled) {
-        // Tiny delay so the prompt doesn't slam in before the menu draws.
         setTimeout(() => setShowRatePrompt(true), 600);
       }
     })();
@@ -95,55 +94,60 @@ export default function MainMenu() {
         locations={[0, 0.45, 1]}
         style={StyleSheet.absoluteFill}
       />
-      <SafeAreaView style={styles.safe} edges={["top"]}>
-        <View style={styles.titleWrap}>
-          <Text style={styles.titleShadow}>FLAPPY MIKU</Text>
-          <Text style={styles.title}>FLAPPY MIKU</Text>
-          <Text style={styles.subtitle}>Tap to flap. Dodge the leeks.</Text>
-        </View>
-
-        <View style={styles.heroCard}>
-          <View style={styles.heroSprite}>
-            <Vocaloid id={selected} size={150} />
+      {/* Content row — scrollable so it never gets hidden by the banner */}
+      <SafeAreaView edges={["top"]} style={styles.contentSafe}>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          <View style={styles.titleWrap}>
+            <Text style={styles.titleShadow}>FLAPPY MIKU</Text>
+            <Text style={styles.title}>FLAPPY MIKU</Text>
+            <Text style={styles.subtitle}>Tap to flap. Dodge the leeks.</Text>
           </View>
-          <Text style={styles.bestLabel}>BEST SCORE</Text>
-          <Text style={styles.bestValue} testID="best-score">{profile?.best ?? 0}</Text>
-          <Text style={styles.charLabel}>
-            {profile ? characterName(selected) : ""}
-          </Text>
-          <View style={styles.coinRow} testID="coin-chip">
-            <View style={styles.coinDot} />
-            <Text style={styles.coinTxt}>{profile?.coins ?? 0} coins</Text>
+
+          <View style={styles.heroCard}>
+            <View style={styles.heroSprite}>
+              <Vocaloid id={selected} size={130} />
+            </View>
+            <Text style={styles.bestLabel}>BEST SCORE</Text>
+            <Text style={styles.bestValue} testID="best-score">{profile?.best ?? 0}</Text>
+            <Text style={styles.charLabel}>{profile ? characterName(selected) : ""}</Text>
+            <View style={styles.coinRow} testID="coin-chip">
+              <View style={styles.coinDot} />
+              <Text style={styles.coinTxt}>{profile?.coins ?? 0} coins</Text>
+            </View>
           </View>
-        </View>
 
-        <View style={styles.actions}>
-          <Pressable
-            testID="play-button"
-            style={({ pressed }) => [styles.playBtn, pressed && styles.btnPressed]}
-            onPress={() => router.push("/game")}
-          >
-            <Text style={styles.playTxt}>PLAY</Text>
-          </Pressable>
-          <Pressable
-            testID="characters-button"
-            style={({ pressed }) => [styles.secondaryBtn, pressed && styles.btnPressed]}
-            onPress={() => router.push("/characters")}
-          >
-            <Text style={styles.secondaryTxt}>CHARACTERS</Text>
-          </Pressable>
-        </View>
+          <View style={styles.actions}>
+            <Pressable
+              testID="play-button"
+              style={({ pressed }) => [styles.playBtn, pressed && styles.btnPressed]}
+              onPress={() => router.push("/game")}
+            >
+              <Text style={styles.playTxt}>PLAY</Text>
+            </Pressable>
+            <Pressable
+              testID="characters-button"
+              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.btnPressed]}
+              onPress={() => router.push("/characters")}
+            >
+              <Text style={styles.secondaryTxt}>CHARACTERS</Text>
+            </Pressable>
+          </View>
 
-        <Pressable onPress={() => Linking.openURL(PRIVACY_URL)} hitSlop={10}>
-          <Text style={styles.privacyLink}>Privacy Policy</Text>
-        </Pressable>
+          <Pressable onPress={() => Linking.openURL(PRIVACY_URL)} hitSlop={10}>
+            <Text style={styles.privacyLink}>Privacy Policy</Text>
+          </Pressable>
+        </ScrollView>
       </SafeAreaView>
 
+      {/* Banner row — fixed-height, sits beneath the content */}
       <SafeAreaView edges={["bottom"]} style={styles.bannerHolder}>
         <BannerAdView testID="banner-menu" />
       </SafeAreaView>
 
-      {/* "Enjoying the game? Rate us!" — shown once after 5th session. */}
       <Modal visible={showRatePrompt} transparent animationType="fade" onRequestClose={onRateLater}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard} testID="rate-prompt">
@@ -193,38 +197,41 @@ function characterName(id: string): string {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#0a0a14" },
-  safe: { flex: 1, alignItems: "center", justifyContent: "space-between", paddingTop: 8, paddingBottom: 12 },
-  titleWrap: { alignItems: "center", marginTop: 12 },
+  root: { flex: 1, flexDirection: "column", backgroundColor: "#0a0a14" },
+  contentSafe: { flex: 1, paddingBottom: 70 },
+  scroll: {
+    flexGrow: 1,
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 12,
+    paddingBottom: 16,
+  },
+  titleWrap: { alignItems: "center", marginTop: 4 },
   titleShadow: {
     position: "absolute",
     color: "rgba(0,0,0,0.35)",
-    fontSize: 40,
+    fontSize: 36,
     fontWeight: "900",
     letterSpacing: 3,
     transform: [{ translateY: 3 }],
   },
-  title: {
-    color: "#1f7e78",
-    fontSize: 40,
-    fontWeight: "900",
-    letterSpacing: 3,
-  },
-  subtitle: { marginTop: 8, color: "#ffffff", fontWeight: "700", letterSpacing: 1 },
+  title: { color: "#1f7e78", fontSize: 36, fontWeight: "900", letterSpacing: 3 },
+  subtitle: { marginTop: 6, color: "#ffffff", fontWeight: "700", letterSpacing: 1 },
   heroCard: {
-    backgroundColor: "rgba(255,255,255,0.85)",
-    borderRadius: 24,
-    paddingHorizontal: 28,
-    paddingVertical: 18,
+    backgroundColor: "rgba(255,255,255,0.88)",
+    borderRadius: 22,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
     alignItems: "center",
     borderWidth: 3,
     borderColor: "#39C5BB",
-    minWidth: 240,
+    minWidth: 220,
+    marginVertical: 8,
   },
-  heroSprite: { marginBottom: 6 },
-  bestLabel: { color: "#444", fontSize: 12, fontWeight: "700", letterSpacing: 2 },
-  bestValue: { color: "#1f7e78", fontSize: 44, fontWeight: "900", marginVertical: 2 },
-  charLabel: { color: "#666", fontSize: 13, fontWeight: "700" },
+  heroSprite: { marginBottom: 4 },
+  bestLabel: { color: "#444", fontSize: 11, fontWeight: "700", letterSpacing: 2 },
+  bestValue: { color: "#1f7e78", fontSize: 38, fontWeight: "900", marginVertical: 0 },
+  charLabel: { color: "#666", fontSize: 12, fontWeight: "700" },
   coinRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -246,34 +253,41 @@ const styles = StyleSheet.create({
     borderColor: "#c79a00",
   },
   coinTxt: { color: "#7a5a00", fontWeight: "900", fontSize: 13, letterSpacing: 1 },
-  actions: { width: "85%", alignItems: "stretch", marginBottom: 18 },
+  actions: { width: "85%", alignItems: "stretch", marginTop: 8 },
   playBtn: {
     backgroundColor: "#39C5BB",
-    paddingVertical: 18,
-    borderRadius: 18,
+    paddingVertical: 14,
+    borderRadius: 16,
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#0e4f4a",
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  playTxt: { color: "#fff", fontSize: 24, fontWeight: "900", letterSpacing: 3 },
+  playTxt: { color: "#fff", fontSize: 22, fontWeight: "900", letterSpacing: 3 },
   secondaryBtn: {
-    paddingVertical: 14,
-    borderRadius: 16,
+    paddingVertical: 11,
+    borderRadius: 14,
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#1f7e78",
     backgroundColor: "rgba(255,255,255,0.6)",
   },
-  secondaryTxt: { color: "#1f7e78", fontSize: 16, fontWeight: "800", letterSpacing: 2 },
+  secondaryTxt: { color: "#1f7e78", fontSize: 14, fontWeight: "800", letterSpacing: 2 },
   btnPressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
   privacyLink: {
     color: "rgba(20,15,40,0.7)",
     fontSize: 12,
     textDecorationLine: "underline",
-    marginTop: 2,
+    marginTop: 12,
+    marginBottom: 4,
   },
-  bannerHolder: { backgroundColor: "#000" },
+  bannerHolder: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "#000",
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(10,8,28,0.6)",
@@ -290,38 +304,17 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 360,
   },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: "#1f7e78",
-    textAlign: "center",
-  },
-  modalBody: {
-    marginTop: 8,
-    color: "#444",
-    fontSize: 14,
-    textAlign: "center",
-    fontWeight: "600",
-  },
+  modalTitle: { fontSize: 22, fontWeight: "900", color: "#1f7e78", textAlign: "center" },
+  modalBody: { marginTop: 8, color: "#444", fontSize: 14, textAlign: "center", fontWeight: "600" },
   modalActions: { flexDirection: "row", gap: 12, marginTop: 22 },
   modalBtnGhost: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: "#888",
-    alignItems: "center",
-    backgroundColor: "#fff",
+    flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 2,
+    borderColor: "#888", alignItems: "center", backgroundColor: "#fff",
   },
   modalGhostTxt: { color: "#666", fontWeight: "800", letterSpacing: 1 },
   modalBtnPrimary: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: "#39C5BB",
-    borderWidth: 2,
-    borderColor: "#0e4f4a",
+    flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: "center",
+    backgroundColor: "#39C5BB", borderWidth: 2, borderColor: "#0e4f4a",
   },
   modalPrimaryTxt: { color: "#fff", fontWeight: "900", letterSpacing: 1 },
 });
